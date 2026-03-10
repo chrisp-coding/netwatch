@@ -16,6 +16,8 @@ pub struct DeviceRecord {
     pub first_seen: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
     pub status: String, // "unknown", "known", "flagged"
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 pub type Db = HashMap<String, DeviceRecord>;
@@ -76,6 +78,7 @@ pub fn update_device(db: &mut Db, device: &Device) {
         first_seen: now,
         last_seen: now,
         status: "unknown".to_string(),
+        tags: Vec::new(),
     });
     entry.last_seen = now;
     if !device.vendor.is_empty() {
@@ -104,6 +107,30 @@ pub fn set_name(db: &mut Db, mac: &str, name: &str) -> bool {
 /// Remove a device from the DB. Returns false if MAC not found.
 pub fn remove_device(db: &mut Db, mac: &str) -> bool {
     db.remove(mac).is_some()
+}
+
+/// Add a tag to a device. Returns false if MAC not found. No-ops if tag already present.
+pub fn add_tag(db: &mut Db, mac: &str, tag: &str) -> bool {
+    match db.get_mut(mac) {
+        Some(record) => {
+            if !record.tags.contains(&tag.to_string()) {
+                record.tags.push(tag.to_string());
+            }
+            true
+        }
+        None => false,
+    }
+}
+
+/// Remove a tag from a device. Returns false if MAC not found.
+pub fn remove_tag(db: &mut Db, mac: &str, tag: &str) -> bool {
+    match db.get_mut(mac) {
+        Some(record) => {
+            record.tags.retain(|t| t != tag);
+            true
+        }
+        None => false,
+    }
 }
 
 /// Set device status to "flagged". Returns false if MAC not found.
@@ -229,5 +256,58 @@ mod tests {
         let ok = set_flag(&mut db, "AA:BB:CC:DD:EE:FF");
         assert!(ok);
         assert_eq!(db["AA:BB:CC:DD:EE:FF"].status, "flagged");
+    }
+
+    #[test]
+    fn add_tag_adds_and_deduplicates() {
+        let mut db: Db = HashMap::new();
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"),
+        );
+        assert!(add_tag(&mut db, "AA:BB:CC:DD:EE:FF", "iot"));
+        assert!(add_tag(&mut db, "AA:BB:CC:DD:EE:FF", "family"));
+        assert!(add_tag(&mut db, "AA:BB:CC:DD:EE:FF", "iot")); // duplicate
+        let tags = &db["AA:BB:CC:DD:EE:FF"].tags;
+        assert_eq!(tags.len(), 2);
+        assert!(tags.contains(&"iot".to_string()));
+        assert!(tags.contains(&"family".to_string()));
+    }
+
+    #[test]
+    fn add_tag_unknown_mac_returns_false() {
+        let mut db: Db = HashMap::new();
+        assert!(!add_tag(&mut db, "00:00:00:00:00:00", "iot"));
+    }
+
+    #[test]
+    fn remove_tag_removes_existing() {
+        let mut db: Db = HashMap::new();
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"),
+        );
+        add_tag(&mut db, "AA:BB:CC:DD:EE:FF", "iot");
+        add_tag(&mut db, "AA:BB:CC:DD:EE:FF", "family");
+        assert!(remove_tag(&mut db, "AA:BB:CC:DD:EE:FF", "iot"));
+        let tags = &db["AA:BB:CC:DD:EE:FF"].tags;
+        assert_eq!(tags.len(), 1);
+        assert!(!tags.contains(&"iot".to_string()));
+    }
+
+    #[test]
+    fn remove_tag_unknown_mac_returns_false() {
+        let mut db: Db = HashMap::new();
+        assert!(!remove_tag(&mut db, "00:00:00:00:00:00", "iot"));
+    }
+
+    #[test]
+    fn new_device_has_empty_tags() {
+        let mut db: Db = HashMap::new();
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"),
+        );
+        assert!(db["AA:BB:CC:DD:EE:FF"].tags.is_empty());
     }
 }

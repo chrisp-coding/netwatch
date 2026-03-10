@@ -100,6 +100,15 @@ fn parse_nmap_output(output: &str) -> Vec<Device> {
     devices
 }
 
+/// Returns true if the MAC address uses a locally-administered (random/private) address.
+/// Bit 1 of the first octet (the "locally administered" bit, 0x02) indicates this.
+pub fn is_random_mac(mac: &str) -> bool {
+    let first = mac.split(':').next().unwrap_or("");
+    u8::from_str_radix(first, 16)
+        .map(|b| b & 0x02 != 0)
+        .unwrap_or(false)
+}
+
 /// Print scan results. Columns: Name | IP | MAC | Hostname | Vendor | Status
 /// Name and Status are pulled from the DB when available.
 pub fn print_scan_table(devices: &[Device], db: &Db) {
@@ -153,7 +162,14 @@ pub fn print_scan_table(devices: &[Device], db: &Db) {
         .max(8);
     let col_vendor = devices
         .iter()
-        .map(|d| d.vendor.len())
+        .map(|d| {
+            let base = d.vendor.len();
+            if !d.mac.is_empty() && is_random_mac(&d.mac) {
+                base + " (random)".len()
+            } else {
+                base
+            }
+        })
         .max()
         .unwrap_or(0)
         .max(6);
@@ -184,11 +200,28 @@ pub fn print_scan_table(devices: &[Device], db: &Db) {
     for (d, name, status) in &rows {
         let padded_status = format!("{:<col_status$}", status);
         let colored_status = colorize_status(status.trim());
-        // Replace padded plain text with colorized version (keeps alignment via padding)
         let status_display = format!("{}{}", colored_status, &padded_status[status.len()..]);
+
+        let vendor_plain = if !d.mac.is_empty() && is_random_mac(&d.mac) {
+            format!("{} (random)", d.vendor)
+        } else {
+            d.vendor.clone()
+        };
+        let padded_vendor = format!("{:<col_vendor$}", vendor_plain);
+        let vendor_display = if !d.mac.is_empty() && is_random_mac(&d.mac) {
+            format!(
+                "{}{}{}",
+                d.vendor,
+                " (random)".dimmed().italic(),
+                &padded_vendor[vendor_plain.len()..]
+            )
+        } else {
+            padded_vendor
+        };
+
         println!(
-            "| {:<col_name$} | {:<col_ip$} | {:<col_mac$} | {:<col_host$} | {:<col_vendor$} | {} |",
-            name, d.ip, d.mac, d.hostname, d.vendor, status_display,
+            "| {:<col_name$} | {:<col_ip$} | {:<col_mac$} | {:<col_host$} | {} | {} |",
+            name, d.ip, d.mac, d.hostname, vendor_display, status_display,
         );
     }
 
@@ -214,11 +247,24 @@ fn colorize_status(s: &str) -> String {
     }
 }
 
-/// Print all devices from DB. Columns: Name | MAC | Last IP | Hostname | Vendor | First Seen | Last Seen | Status
-pub fn print_list_table(db: &Db) {
-    let mut records: Vec<&DeviceRecord> = db.values().collect();
+/// Print all devices from DB. Columns: Name | MAC | Last IP | Hostname | Vendor | First Seen | Last Seen | Status | Tags
+pub fn print_list_table(db: &Db, tag_filter: Option<&str>) {
+    let mut records: Vec<&DeviceRecord> = db
+        .values()
+        .filter(|r| {
+            if let Some(tag) = tag_filter {
+                r.tags.contains(&tag.to_string())
+            } else {
+                true
+            }
+        })
+        .collect();
     if records.is_empty() {
-        println!("No devices in database. Run 'scan' first.");
+        if tag_filter.is_some() {
+            println!("No devices with that tag.");
+        } else {
+            println!("No devices in database. Run 'scan' first.");
+        }
         return;
     }
     records.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
@@ -262,9 +308,21 @@ pub fn print_list_table(db: &Db) {
         .max()
         .unwrap_or(0)
         .max(7);
+    let col_tags = records
+        .iter()
+        .map(|r| {
+            if r.tags.is_empty() {
+                0
+            } else {
+                r.tags.join(", ").len()
+            }
+        })
+        .max()
+        .unwrap_or(0)
+        .max(4);
 
     let sep = format!(
-        "+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+",
+        "+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+",
         "-".repeat(col_name),
         "-".repeat(col_mac),
         "-".repeat(col_ip),
@@ -273,12 +331,13 @@ pub fn print_list_table(db: &Db) {
         "-".repeat(col_time),
         "-".repeat(col_time),
         "-".repeat(col_status),
+        "-".repeat(col_tags),
     );
 
     println!("{sep}");
     println!(
-        "| {:<col_name$} | {:<col_mac$} | {:<col_ip$} | {:<col_host$} | {:<col_vendor$} | {:<col_time$} | {:<col_time$} | {:<col_status$} |",
-        "Name", "MAC", "Last IP", "Hostname", "Vendor", "First Seen", "Last Seen", "Status",
+        "| {:<col_name$} | {:<col_mac$} | {:<col_ip$} | {:<col_host$} | {:<col_vendor$} | {:<col_time$} | {:<col_time$} | {:<col_status$} | {:<col_tags$} |",
+        "Name", "MAC", "Last IP", "Hostname", "Vendor", "First Seen", "Last Seen", "Status", "Tags",
     );
     println!("{sep}");
 
@@ -290,10 +349,11 @@ pub fn print_list_table(db: &Db) {
         let padded_status = format!("{:<col_status$}", status_plain);
         let colored_status = colorize_status(status_plain.trim());
         let status_display = format!("{}{}", colored_status, &padded_status[status_plain.len()..]);
+        let tags = r.tags.join(", ");
         println!(
-            "| {:<col_name$} | {:<col_mac$} | {:<col_ip$} | {:<col_host$} | {:<col_vendor$} | {:<col_time$} | {:<col_time$} | {} |",
+            "| {:<col_name$} | {:<col_mac$} | {:<col_ip$} | {:<col_host$} | {:<col_vendor$} | {:<col_time$} | {:<col_time$} | {} | {:<col_tags$} |",
             name, r.mac, ip, host, r.vendor,
-            fmt_time(&r.first_seen), fmt_time(&r.last_seen), status_display,
+            fmt_time(&r.first_seen), fmt_time(&r.last_seen), status_display, tags,
         );
     }
 
@@ -379,5 +439,27 @@ Nmap done: 256 IP addresses (4 hosts up) scanned in 2.50 seconds
         let output = "Starting Nmap 7.80\nNmap done: 256 IP addresses (0 hosts up)\n";
         let devices = parse_nmap_output(output);
         assert!(devices.is_empty());
+    }
+
+    #[test]
+    fn random_mac_locally_administered_bit_set() {
+        // 0x02 bit set in first octet → locally administered (random)
+        assert!(is_random_mac("02:AA:BB:CC:DD:EE")); // 0x02
+        assert!(is_random_mac("06:AA:BB:CC:DD:EE")); // 0x06
+        assert!(is_random_mac("0A:AA:BB:CC:DD:EE")); // 0x0A
+        assert!(is_random_mac("AA:BB:CC:DD:EE:FF")); // 0xAA = 1010 1010, bit1=1
+    }
+
+    #[test]
+    fn random_mac_globally_unique_not_random() {
+        assert!(!is_random_mac("AC:1F:6B:11:22:33")); // 0xAC = 1010 1100, bit1=0
+        assert!(!is_random_mac("B8:27:EB:AA:BB:CC")); // 0xB8 = 1011 1000, bit1=0
+        assert!(!is_random_mac("00:03:93:DD:EE:FF")); // 0x00, bit1=0
+    }
+
+    #[test]
+    fn random_mac_invalid_returns_false() {
+        assert!(!is_random_mac(""));
+        assert!(!is_random_mac("not:a:mac"));
     }
 }

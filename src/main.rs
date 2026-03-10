@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod history;
 mod oui;
 mod scanner;
 
@@ -23,7 +24,11 @@ enum Commands {
         subnet: Option<String>,
     },
     /// List all known devices from the database
-    List,
+    List {
+        /// Filter by tag (e.g. 'iot', 'family')
+        #[arg(long)]
+        tag: Option<String>,
+    },
     /// Assign a friendly name to a device
     Name { mac: String, name: String },
     /// Continuously scan and alert on new/disappeared devices
@@ -40,6 +45,16 @@ enum Commands {
     Flag { mac: String },
     /// Remove a device from tracking
     Forget { mac: String },
+    /// Add a tag to a device (e.g. 'iot', 'family', 'guest')
+    Tag { mac: String, tag: String },
+    /// Remove a tag from a device
+    Untag { mac: String, tag: String },
+    /// Show scan history log
+    Log {
+        /// Number of recent scans to show (default: 10)
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
     /// Create a default config file at ~/.config/netwatch/config.toml
     Init,
     /// Export the device database to stdout
@@ -160,9 +175,12 @@ fn main() {
             }
 
             scanner::print_scan_table(&devices, &db);
+            if let Err(e) = history::append_scan(&devices) {
+                eprintln!("Warning: could not write scan log: {e}");
+            }
         }
 
-        Commands::List => {
+        Commands::List { tag } => {
             let db = match db::load_db() {
                 Ok(d) => d,
                 Err(e) => {
@@ -170,7 +188,7 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            scanner::print_list_table(&db);
+            scanner::print_list_table(&db, tag.as_deref());
         }
 
         Commands::Name { mac, name } => {
@@ -246,6 +264,9 @@ fn main() {
                         }
                         if let Err(e) = db::save_db(&db) {
                             eprintln!("[{now}] Warning: could not save DB: {e}");
+                        }
+                        if let Err(e) = history::append_scan(&devices) {
+                            eprintln!("[{now}] Warning: could not write scan log: {e}");
                         }
 
                         for d in &new_devices {
@@ -481,6 +502,72 @@ fn main() {
                 total, known, unknown, flagged
             );
             println!("Last scan:    {last_scan}");
+        }
+
+        Commands::Tag { mac, tag } => {
+            if let Err(e) = validate_mac(&mac) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            let mut db = match db::load_db() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if db::add_tag(&mut db, &mac, &tag) {
+                if let Err(e) = db::save_db(&db) {
+                    eprintln!("Error saving DB: {e}");
+                    std::process::exit(1);
+                }
+                println!("Tagged {} with \"{}\"", mac, tag);
+            } else {
+                eprintln!("Unknown device: {}. Run 'scan' first.", mac);
+                std::process::exit(1);
+            }
+        }
+
+        Commands::Untag { mac, tag } => {
+            if let Err(e) = validate_mac(&mac) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            let mut db = match db::load_db() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if db::remove_tag(&mut db, &mac, &tag) {
+                if let Err(e) = db::save_db(&db) {
+                    eprintln!("Error saving DB: {e}");
+                    std::process::exit(1);
+                }
+                println!("Removed tag \"{}\" from {}", tag, mac);
+            } else {
+                eprintln!("Device {} not found or doesn't have tag \"{}\".", mac, tag);
+                std::process::exit(1);
+            }
+        }
+
+        Commands::Log { limit } => {
+            let entries = match history::read_log(limit) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if entries.is_empty() {
+                println!("No scan history yet. Run 'netwatch scan' first.");
+            } else {
+                let db = db::load_db().unwrap_or_default();
+                for entry in &entries {
+                    println!("{}", history::format_log_entry(entry, &db));
+                }
+            }
         }
     }
 }
