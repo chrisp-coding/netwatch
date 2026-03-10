@@ -20,7 +20,7 @@ pub struct DeviceRecord {
 
 pub type Db = HashMap<String, DeviceRecord>;
 
-fn db_path() -> PathBuf {
+pub fn db_path() -> PathBuf {
     // When run with sudo, resolve the real user's home directory
     let home = if let Ok(sudo_user) = std::env::var("SUDO_USER") {
         format!("/home/{}", sudo_user)

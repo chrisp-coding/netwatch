@@ -1,3 +1,4 @@
+mod config;
 mod db;
 mod oui;
 mod scanner;
@@ -29,9 +30,9 @@ enum Commands {
     Watch {
         /// Subnet to scan (auto-detected if not provided)
         subnet: Option<String>,
-        /// Seconds between scans
-        #[arg(long, default_value_t = 60)]
-        interval: u64,
+        /// Seconds between scans (overrides config file)
+        #[arg(long)]
+        interval: Option<u64>,
     },
     /// Show full history for a device
     History { mac: String },
@@ -39,6 +40,16 @@ enum Commands {
     Flag { mac: String },
     /// Remove a device from tracking
     Forget { mac: String },
+    /// Create a default config file at ~/.config/netwatch/config.toml
+    Init,
+    /// Export the device database to stdout
+    Export {
+        /// Output format: json or csv (default: json)
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Show database and config status summary
+    Status,
 }
 
 /// Auto-detect the local subnet by finding the default route interface and its CIDR
@@ -111,11 +122,22 @@ fn require_subnet(subnet: Option<String>) -> String {
     })
 }
 
+/// Quote a CSV field if it contains commas, quotes, or newlines.
+fn csv_quote(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
+    let cfg = config::load_config();
 
     match cli.command {
         Commands::Scan { subnet } => {
+            let subnet = subnet.or_else(|| cfg.subnet.clone());
             let subnet = require_subnet(subnet);
             println!("Scanning {}...", subnet);
             let devices = match scanner::run_scan(&subnet) {
@@ -176,7 +198,9 @@ fn main() {
         }
 
         Commands::Watch { subnet, interval } => {
+            let subnet = subnet.or_else(|| cfg.subnet.clone());
             let subnet = require_subnet(subnet);
+            let interval = interval.or(cfg.watch_interval).unwrap_or(60);
 
             let mut db = db::load_db().unwrap_or_else(|e| {
                 eprintln!("Warning: could not load DB: {e}");
@@ -371,6 +395,92 @@ fn main() {
                 eprintln!("Unknown device: {}", mac);
                 std::process::exit(1);
             }
+        }
+
+        Commands::Init => match config::write_default_config() {
+            Ok(()) => {
+                println!("Created config: {}", config::config_path().display());
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        },
+
+        Commands::Export { format } => {
+            let db = match db::load_db() {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            };
+            match format.as_str() {
+                "json" => match serde_json::to_string_pretty(&db) {
+                    Ok(json) => println!("{json}"),
+                    Err(e) => {
+                        eprintln!("Error serializing DB: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                "csv" => {
+                    println!("mac,name,last_ip,hostname,vendor,first_seen,last_seen,status");
+                    let mut records: Vec<&db::DeviceRecord> = db.values().collect();
+                    records.sort_by(|a, b| a.mac.cmp(&b.mac));
+                    for r in records {
+                        let name = r.custom_name.as_deref().unwrap_or("");
+                        let last_ip = r.ips_seen.last().map(|s| s.as_str()).unwrap_or("");
+                        let hostname = r.hostnames.last().map(|s| s.as_str()).unwrap_or("");
+                        println!(
+                            "{},{},{},{},{},{},{},{}",
+                            csv_quote(&r.mac),
+                            csv_quote(name),
+                            csv_quote(last_ip),
+                            csv_quote(hostname),
+                            csv_quote(&r.vendor),
+                            r.first_seen.format("%Y-%m-%dT%H:%M:%SZ"),
+                            r.last_seen.format("%Y-%m-%dT%H:%M:%SZ"),
+                            csv_quote(&r.status),
+                        );
+                    }
+                }
+                other => {
+                    eprintln!("Unknown format '{other}'. Use 'json' or 'csv'.");
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::Status => {
+            let db_path = db::db_path();
+            let cfg_path = config::config_path();
+
+            let db = db::load_db().unwrap_or_default();
+            let total = db.len();
+            let known = db.values().filter(|r| r.status == "known").count();
+            let flagged = db.values().filter(|r| r.status == "flagged").count();
+            let unknown = db.values().filter(|r| r.status == "unknown").count();
+
+            let last_scan = db
+                .values()
+                .map(|r| r.last_seen)
+                .max()
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "(never)".to_string());
+
+            let cfg_status = if cfg_path.exists() {
+                "exists"
+            } else {
+                "not found (run 'netwatch init')"
+            };
+
+            println!("DB path:      {}", db_path.display());
+            println!("Config path:  {} [{}]", cfg_path.display(), cfg_status);
+            println!(
+                "Devices:      {} total ({} known, {} unknown, {} flagged)",
+                total, known, unknown, flagged
+            );
+            println!("Last scan:    {last_scan}");
         }
     }
 }

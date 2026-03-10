@@ -1,0 +1,16 @@
+[Unit]
+Description=netwatch - Home network device monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/netwatch watch --interval 300
+Restart=on-failure
+RestartSec=10
+
+# Run as root (needed for nmap ARP scanning) but write DB to chris's home
+Environment=SUDO_USER=chris
+
+[Install]
+WantedBy=multi-user.target

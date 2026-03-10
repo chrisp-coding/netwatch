@@ -12,6 +12,9 @@ Built in Rust. Designed for home labs and Raspberry Pi setups.
 - **Watch mode** — Continuous monitoring with alerts for new and disappeared devices
 - **OUI vendor lookup** — Identifies device manufacturers from MAC addresses
 - **Flag suspicious devices** — Mark and track unknown devices on your network
+- **Color output** — Green (known), yellow (unknown/new), red (flagged)
+- **Config file** — TOML config for default subnet and watch interval
+- **Export** — Dump device data as JSON or CSV
 
 ## Requirements
 
@@ -45,7 +48,7 @@ netwatch list
 sudo netwatch watch --interval 30
 ```
 
-## Usage
+## Commands
 
 ### `scan [subnet]`
 
@@ -75,13 +78,13 @@ Assign a friendly name to a device. Also marks it as "known".
 
 Show full details for a device — all IPs seen, hostnames, timestamps.
 
-### `watch [--interval <seconds>]`
+### `watch [--interval <seconds>] [subnet]`
 
 Continuous monitoring mode. Scans at the specified interval (default: 60s) and prints timestamped alerts when devices appear or disappear.
 
 ```
-[2026-03-10 03:15:46] NEW DEVICE: 2A:C9:B2:42:AE:6A (192.168.1.127) - Unknown vendor
-[2026-03-10 03:16:48] DISAPPEARED: 28:07:08:F8:29:3C (Samsung.lan)
+[2026-03-10 03:15:46] ▲ New device: 2A:C9:B2:42:AE:6A 192.168.1.127 (Unknown vendor)
+[2026-03-10 03:16:48] ▼ Device gone: 28:07:08:F8:29:3C "Samsung"
 ```
 
 ### `flag <MAC>`
@@ -92,9 +95,58 @@ Mark a device as suspicious/flagged for closer monitoring.
 
 Remove a device from the database entirely.
 
+### `export [--format json|csv]`
+
+Export device database to stdout. Default format is JSON.
+
+```bash
+netwatch export --format csv > devices.csv
+netwatch export --format json > devices.json
+```
+
+### `status`
+
+Show database and config status — device counts, paths, last scan time.
+
+```
+DB path:      /home/chris/.config/netwatch/devices.json
+Config path:  /home/chris/.config/netwatch/config.toml
+Devices:      9 total (3 known, 5 unknown, 1 flagged)
+Last scan:    2026-03-10 03:15:46 UTC
+```
+
+### `init`
+
+Create a default config file at `~/.config/netwatch/config.toml`.
+
+## Configuration
+
+Config file: `~/.config/netwatch/config.toml`
+
+```toml
+# Subnet to scan (auto-detected if not set)
+# subnet = "192.168.1.0/24"
+
+# Seconds between scans in watch mode (default: 60)
+# watch_interval = 60
+```
+
+CLI arguments always take priority over config values.
+
+## Running as a Service
+
+A systemd service file is included for running watch mode as a daemon:
+
+```bash
+sudo cp netwatch.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now netwatch
+sudo journalctl -u netwatch -f  # view logs
+```
+
 ## Data Storage
 
-Device data is stored at `~/.config/netwatch/devices.json`. The database persists across scans and tracks:
+Device data is stored at `~/.config/netwatch/devices.json`. The database tracks:
 
 - MAC address (primary key)
 - All IPs and hostnames seen
@@ -111,4 +163,4 @@ cargo test
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)
