@@ -99,7 +99,7 @@ pub fn print_scan_table(devices: &[Device], db: &Db) {
                 match db.get(&d.mac) {
                     Some(r) => (
                         r.custom_name.clone().unwrap_or_default(),
-                        r.status.clone(),
+                        fmt_status(&r.status),
                     ),
                     None => (String::new(), "new".to_string()),
                 }
@@ -143,6 +143,14 @@ pub fn print_scan_table(devices: &[Device], db: &Db) {
     println!("{} device(s) found.", devices.len());
 }
 
+fn fmt_status(s: &str) -> String {
+    if s == "flagged" {
+        "*flagged".to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 /// Print all devices from DB. Columns: Name | MAC | Last IP | Hostname | Vendor | First Seen | Last Seen | Status
 pub fn print_list_table(db: &Db) {
     let mut records: Vec<&DeviceRecord> = db.values().collect();
@@ -162,7 +170,7 @@ pub fn print_list_table(db: &Db) {
     let col_host = records.iter().map(|r| r.hostnames.last().map(|s| s.len()).unwrap_or(0)).max().unwrap_or(0).max(8);
     let col_vendor = records.iter().map(|r| r.vendor.len()).max().unwrap_or(0).max(6);
     let col_time = 16; // "YYYY-MM-DD HH:MM"
-    let col_status = records.iter().map(|r| r.status.len()).max().unwrap_or(0).max(7);
+    let col_status = records.iter().map(|r| fmt_status(&r.status).len()).max().unwrap_or(0).max(7);
 
     let sep = format!(
         "+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+",
@@ -190,7 +198,7 @@ pub fn print_list_table(db: &Db) {
         println!(
             "| {:<col_name$} | {:<col_mac$} | {:<col_ip$} | {:<col_host$} | {:<col_vendor$} | {:<col_time$} | {:<col_time$} | {:<col_status$} |",
             name, r.mac, ip, host, r.vendor,
-            fmt_time(&r.first_seen), fmt_time(&r.last_seen), r.status,
+            fmt_time(&r.first_seen), fmt_time(&r.last_seen), fmt_status(&r.status),
         );
     }
 

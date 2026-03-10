@@ -106,3 +106,14 @@ pub fn set_name(db: &mut Db, mac: &str, name: &str) -> bool {
 pub fn remove_device(db: &mut Db, mac: &str) -> bool {
     db.remove(mac).is_some()
 }
+
+/// Set device status to "flagged". Returns false if MAC not found.
+pub fn set_flag(db: &mut Db, mac: &str) -> bool {
+    match db.get_mut(mac) {
+        Some(record) => {
+            record.status = "flagged".to_string();
+            true
+        }
+        None => false,
+    }
+}
