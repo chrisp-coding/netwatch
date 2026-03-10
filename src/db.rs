@@ -117,3 +117,97 @@ pub fn set_flag(db: &mut Db, mac: &str) -> bool {
         None => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scanner::Device;
+
+    fn make_device(mac: &str, ip: &str, vendor: &str) -> Device {
+        Device {
+            ip: ip.to_string(),
+            mac: mac.to_string(),
+            hostname: String::new(),
+            vendor: vendor.to_string(),
+        }
+    }
+
+    #[test]
+    fn update_device_new_entry() {
+        let mut db: Db = HashMap::new();
+        let d = make_device("AA:BB:CC:DD:EE:FF", "192.168.1.5", "Acme");
+        update_device(&mut db, &d);
+        assert!(db.contains_key("AA:BB:CC:DD:EE:FF"));
+        let r = &db["AA:BB:CC:DD:EE:FF"];
+        assert_eq!(r.mac, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(r.ips_seen, vec!["192.168.1.5"]);
+        assert_eq!(r.vendor, "Acme");
+        assert_eq!(r.status, "unknown");
+    }
+
+    #[test]
+    fn update_device_accumulates_ips() {
+        let mut db: Db = HashMap::new();
+        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.2", "Acme"));
+        let r = &db["AA:BB:CC:DD:EE:FF"];
+        assert_eq!(r.ips_seen, vec!["10.0.0.1", "10.0.0.2"]);
+    }
+
+    #[test]
+    fn update_device_no_duplicate_ips() {
+        let mut db: Db = HashMap::new();
+        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        let r = &db["AA:BB:CC:DD:EE:FF"];
+        assert_eq!(r.ips_seen.len(), 1);
+    }
+
+    #[test]
+    fn update_device_skips_empty_mac() {
+        let mut db: Db = HashMap::new();
+        update_device(&mut db, &make_device("", "10.0.0.1", ""));
+        assert!(db.is_empty());
+    }
+
+    #[test]
+    fn set_name_known_device() {
+        let mut db: Db = HashMap::new();
+        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        let ok = set_name(&mut db, "AA:BB:CC:DD:EE:FF", "My Device");
+        assert!(ok);
+        let r = &db["AA:BB:CC:DD:EE:FF"];
+        assert_eq!(r.custom_name.as_deref(), Some("My Device"));
+        assert_eq!(r.status, "known");
+    }
+
+    #[test]
+    fn set_name_unknown_mac_returns_false() {
+        let mut db: Db = HashMap::new();
+        assert!(!set_name(&mut db, "00:00:00:00:00:00", "Ghost"));
+    }
+
+    #[test]
+    fn remove_device_known_mac() {
+        let mut db: Db = HashMap::new();
+        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        let ok = remove_device(&mut db, "AA:BB:CC:DD:EE:FF");
+        assert!(ok);
+        assert!(db.is_empty());
+    }
+
+    #[test]
+    fn remove_device_unknown_mac_returns_false() {
+        let mut db: Db = HashMap::new();
+        assert!(!remove_device(&mut db, "00:00:00:00:00:00"));
+    }
+
+    #[test]
+    fn set_flag_marks_device() {
+        let mut db: Db = HashMap::new();
+        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        let ok = set_flag(&mut db, "AA:BB:CC:DD:EE:FF");
+        assert!(ok);
+        assert_eq!(db["AA:BB:CC:DD:EE:FF"].status, "flagged");
+    }
+}

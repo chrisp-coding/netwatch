@@ -1,4 +1,5 @@
 mod db;
+mod oui;
 mod scanner;
 
 use clap::{Parser, Subcommand};
@@ -96,6 +97,18 @@ fn detect_subnet() -> Option<String> {
     None
 }
 
+/// Validate MAC address format: XX:XX:XX:XX:XX:XX (colon-separated hex bytes).
+fn validate_mac(mac: &str) -> Result<(), String> {
+    let parts: Vec<&str> = mac.split(':').collect();
+    if parts.len() != 6 || parts.iter().any(|p| p.len() != 2 || u8::from_str_radix(p, 16).is_err()) {
+        return Err(format!(
+            "Invalid MAC address '{}'. Expected format: XX:XX:XX:XX:XX:XX (e.g. B8:27:EB:12:34:56)",
+            mac
+        ));
+    }
+    Ok(())
+}
+
 fn require_subnet(subnet: Option<String>) -> String {
     subnet.unwrap_or_else(|| {
         detect_subnet().unwrap_or_else(|| {
@@ -146,6 +159,10 @@ fn main() {
         }
 
         Commands::Name { mac, name } => {
+            if let Err(e) = validate_mac(&mac) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
             let mut db = match db::load_db() {
                 Ok(d) => d,
                 Err(e) => {
@@ -247,6 +264,10 @@ fn main() {
         }
 
         Commands::History { mac } => {
+            if let Err(e) = validate_mac(&mac) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
             let db = match db::load_db() {
                 Ok(d) => d,
                 Err(e) => {
@@ -276,6 +297,10 @@ fn main() {
         }
 
         Commands::Flag { mac } => {
+            if let Err(e) = validate_mac(&mac) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
             let mut db = match db::load_db() {
                 Ok(d) => d,
                 Err(e) => {
@@ -296,6 +321,10 @@ fn main() {
         }
 
         Commands::Forget { mac } => {
+            if let Err(e) = validate_mac(&mac) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
             let mut db = match db::load_db() {
                 Ok(d) => d,
                 Err(e) => {
