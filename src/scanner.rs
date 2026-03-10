@@ -1,3 +1,4 @@
+use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -47,7 +48,7 @@ fn parse_nmap_output(output: &str) -> Vec<Device> {
         let line = line.trim();
 
         // "Nmap scan report for hostname (1.2.3.4)" or "Nmap scan report for 1.2.3.4"
-        if line.starts_with("Nmap scan report for ") {
+        if let Some(rest) = line.strip_prefix("Nmap scan report for ") {
             if !current_ip.is_empty() {
                 devices.push(Device {
                     ip: current_ip.clone(),
@@ -59,7 +60,6 @@ fn parse_nmap_output(output: &str) -> Vec<Device> {
             current_mac.clear();
             current_vendor.clear();
 
-            let rest = &line["Nmap scan report for ".len()..];
             if let Some(paren) = rest.find('(') {
                 current_hostname = rest[..paren].trim().to_string();
                 current_ip = rest[paren + 1..].trim_end_matches(')').to_string();
@@ -67,8 +67,7 @@ fn parse_nmap_output(output: &str) -> Vec<Device> {
                 current_ip = rest.to_string();
                 current_hostname = String::new();
             }
-        } else if line.starts_with("MAC Address: ") {
-            let rest = &line["MAC Address: ".len()..];
+        } else if let Some(rest) = line.strip_prefix("MAC Address: ") {
             if let Some(paren) = rest.find('(') {
                 current_mac = rest[..paren].trim().to_string();
                 let reported = rest[paren + 1..].trim_end_matches(')').to_string();
@@ -128,12 +127,42 @@ pub fn print_scan_table(devices: &[Device], db: &Db) {
         })
         .collect();
 
-    let col_name = rows.iter().map(|(_, n, _)| n.len()).max().unwrap_or(0).max(4);
-    let col_ip = devices.iter().map(|d| d.ip.len()).max().unwrap_or(0).max(15);
-    let col_mac = devices.iter().map(|d| d.mac.len()).max().unwrap_or(0).max(17);
-    let col_host = devices.iter().map(|d| d.hostname.len()).max().unwrap_or(0).max(8);
-    let col_vendor = devices.iter().map(|d| d.vendor.len()).max().unwrap_or(0).max(6);
-    let col_status = rows.iter().map(|(_, _, s)| s.len()).max().unwrap_or(0).max(7);
+    let col_name = rows
+        .iter()
+        .map(|(_, n, _)| n.len())
+        .max()
+        .unwrap_or(0)
+        .max(4);
+    let col_ip = devices
+        .iter()
+        .map(|d| d.ip.len())
+        .max()
+        .unwrap_or(0)
+        .max(15);
+    let col_mac = devices
+        .iter()
+        .map(|d| d.mac.len())
+        .max()
+        .unwrap_or(0)
+        .max(17);
+    let col_host = devices
+        .iter()
+        .map(|d| d.hostname.len())
+        .max()
+        .unwrap_or(0)
+        .max(8);
+    let col_vendor = devices
+        .iter()
+        .map(|d| d.vendor.len())
+        .max()
+        .unwrap_or(0)
+        .max(6);
+    let col_status = rows
+        .iter()
+        .map(|(_, _, s)| s.len())
+        .max()
+        .unwrap_or(0)
+        .max(7);
 
     let sep = format!(
         "+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+",
@@ -153,9 +182,13 @@ pub fn print_scan_table(devices: &[Device], db: &Db) {
     println!("{sep}");
 
     for (d, name, status) in &rows {
+        let padded_status = format!("{:<col_status$}", status);
+        let colored_status = colorize_status(status.trim());
+        // Replace padded plain text with colorized version (keeps alignment via padding)
+        let status_display = format!("{}{}", colored_status, &padded_status[status.len()..]);
         println!(
-            "| {:<col_name$} | {:<col_ip$} | {:<col_mac$} | {:<col_host$} | {:<col_vendor$} | {:<col_status$} |",
-            name, d.ip, d.mac, d.hostname, d.vendor, status,
+            "| {:<col_name$} | {:<col_ip$} | {:<col_mac$} | {:<col_host$} | {:<col_vendor$} | {} |",
+            name, d.ip, d.mac, d.hostname, d.vendor, status_display,
         );
     }
 
@@ -171,6 +204,16 @@ fn fmt_status(s: &str) -> String {
     }
 }
 
+fn colorize_status(s: &str) -> String {
+    match s {
+        "known" => "known".green().to_string(),
+        "*flagged" | "flagged" => "*flagged".red().bold().to_string(),
+        "new" => "new".yellow().bold().to_string(),
+        "unknown" => "unknown".yellow().to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// Print all devices from DB. Columns: Name | MAC | Last IP | Hostname | Vendor | First Seen | Last Seen | Status
 pub fn print_list_table(db: &Db) {
     let mut records: Vec<&DeviceRecord> = db.values().collect();
@@ -180,17 +223,45 @@ pub fn print_list_table(db: &Db) {
     }
     records.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
 
-    let fmt_time = |dt: &chrono::DateTime<chrono::Utc>| {
-        dt.format("%Y-%m-%d %H:%M").to_string()
-    };
+    let fmt_time = |dt: &chrono::DateTime<chrono::Utc>| dt.format("%Y-%m-%d %H:%M").to_string();
 
-    let col_name = records.iter().map(|r| r.custom_name.as_deref().unwrap_or("").len()).max().unwrap_or(0).max(4);
-    let col_mac = records.iter().map(|r| r.mac.len()).max().unwrap_or(0).max(17);
-    let col_ip = records.iter().map(|r| r.ips_seen.last().map(|s| s.len()).unwrap_or(0)).max().unwrap_or(0).max(15);
-    let col_host = records.iter().map(|r| r.hostnames.last().map(|s| s.len()).unwrap_or(0)).max().unwrap_or(0).max(8);
-    let col_vendor = records.iter().map(|r| r.vendor.len()).max().unwrap_or(0).max(6);
+    let col_name = records
+        .iter()
+        .map(|r| r.custom_name.as_deref().unwrap_or("").len())
+        .max()
+        .unwrap_or(0)
+        .max(4);
+    let col_mac = records
+        .iter()
+        .map(|r| r.mac.len())
+        .max()
+        .unwrap_or(0)
+        .max(17);
+    let col_ip = records
+        .iter()
+        .map(|r| r.ips_seen.last().map(|s| s.len()).unwrap_or(0))
+        .max()
+        .unwrap_or(0)
+        .max(15);
+    let col_host = records
+        .iter()
+        .map(|r| r.hostnames.last().map(|s| s.len()).unwrap_or(0))
+        .max()
+        .unwrap_or(0)
+        .max(8);
+    let col_vendor = records
+        .iter()
+        .map(|r| r.vendor.len())
+        .max()
+        .unwrap_or(0)
+        .max(6);
     let col_time = 16; // "YYYY-MM-DD HH:MM"
-    let col_status = records.iter().map(|r| fmt_status(&r.status).len()).max().unwrap_or(0).max(7);
+    let col_status = records
+        .iter()
+        .map(|r| fmt_status(&r.status).len())
+        .max()
+        .unwrap_or(0)
+        .max(7);
 
     let sep = format!(
         "+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+-{}-+",
@@ -215,10 +286,14 @@ pub fn print_list_table(db: &Db) {
         let name = r.custom_name.as_deref().unwrap_or("");
         let ip = r.ips_seen.last().map(|s| s.as_str()).unwrap_or("");
         let host = r.hostnames.last().map(|s| s.as_str()).unwrap_or("");
+        let status_plain = fmt_status(&r.status);
+        let padded_status = format!("{:<col_status$}", status_plain);
+        let colored_status = colorize_status(status_plain.trim());
+        let status_display = format!("{}{}", colored_status, &padded_status[status_plain.len()..]);
         println!(
-            "| {:<col_name$} | {:<col_mac$} | {:<col_ip$} | {:<col_host$} | {:<col_vendor$} | {:<col_time$} | {:<col_time$} | {:<col_status$} |",
+            "| {:<col_name$} | {:<col_mac$} | {:<col_ip$} | {:<col_host$} | {:<col_vendor$} | {:<col_time$} | {:<col_time$} | {} |",
             name, r.mac, ip, host, r.vendor,
-            fmt_time(&r.first_seen), fmt_time(&r.last_seen), fmt_status(&r.status),
+            fmt_time(&r.first_seen), fmt_time(&r.last_seen), status_display,
         );
     }
 

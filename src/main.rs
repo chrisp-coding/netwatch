@@ -3,6 +3,7 @@ mod oui;
 mod scanner;
 
 use clap::{Parser, Subcommand};
+use colored::Colorize;
 use std::collections::HashSet;
 use std::process::Command;
 
@@ -23,10 +24,7 @@ enum Commands {
     /// List all known devices from the database
     List,
     /// Assign a friendly name to a device
-    Name {
-        mac: String,
-        name: String,
-    },
+    Name { mac: String, name: String },
     /// Continuously scan and alert on new/disappeared devices
     Watch {
         /// Subnet to scan (auto-detected if not provided)
@@ -36,17 +34,11 @@ enum Commands {
         interval: u64,
     },
     /// Show full history for a device
-    History {
-        mac: String,
-    },
+    History { mac: String },
     /// Mark a device as flagged (suspicious)
-    Flag {
-        mac: String,
-    },
+    Flag { mac: String },
     /// Remove a device from tracking
-    Forget {
-        mac: String,
-    },
+    Forget { mac: String },
 }
 
 /// Auto-detect the local subnet by finding the default route interface and its CIDR
@@ -73,10 +65,7 @@ fn detect_subnet() -> Option<String> {
             let cidr = trimmed.split_whitespace().nth(1)?;
             let (ip_str, prefix) = cidr.split_once('/')?;
             let prefix_num: u32 = prefix.parse().ok()?;
-            let octets: Vec<u8> = ip_str
-                .split('.')
-                .filter_map(|o| o.parse().ok())
-                .collect();
+            let octets: Vec<u8> = ip_str.split('.').filter_map(|o| o.parse().ok()).collect();
             if octets.len() != 4 {
                 return None;
             }
@@ -100,7 +89,11 @@ fn detect_subnet() -> Option<String> {
 /// Validate MAC address format: XX:XX:XX:XX:XX:XX (colon-separated hex bytes).
 fn validate_mac(mac: &str) -> Result<(), String> {
     let parts: Vec<&str> = mac.split(':').collect();
-    if parts.len() != 6 || parts.iter().any(|p| p.len() != 2 || u8::from_str_radix(p, 16).is_err()) {
+    if parts.len() != 6
+        || parts
+            .iter()
+            .any(|p| p.len() != 2 || u8::from_str_radix(p, 16).is_err())
+    {
         return Err(format!(
             "Invalid MAC address '{}'. Expected format: XX:XX:XX:XX:XX:XX (e.g. B8:27:EB:12:34:56)",
             mac
@@ -194,7 +187,10 @@ fn main() {
             let session_start_macs: HashSet<String> = db.keys().cloned().collect();
             let mut last_macs: HashSet<String> = HashSet::new();
 
-            println!("Watching {} every {}s. Press Ctrl+C to stop.", subnet, interval);
+            println!(
+                "Watching {} every {}s. Press Ctrl+C to stop.",
+                subnet, interval
+            );
 
             loop {
                 let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
@@ -210,9 +206,7 @@ fn main() {
                         // New = appeared in this scan but not known before session
                         let new_devices: Vec<&scanner::Device> = devices
                             .iter()
-                            .filter(|d| {
-                                !d.mac.is_empty() && !session_start_macs.contains(&d.mac)
-                            })
+                            .filter(|d| !d.mac.is_empty() && !session_start_macs.contains(&d.mac))
                             .collect();
 
                         // Disappeared = was in last scan, not in this one
@@ -236,7 +230,13 @@ fn main() {
                             } else {
                                 format!(" ({})", d.vendor)
                             };
-                            println!("[{now}] ALERT: New device: {} {}{}", d.mac, d.ip, label);
+                            println!(
+                                "[{now}] {} New device: {} {}{}",
+                                "▲".yellow().bold(),
+                                d.mac,
+                                d.ip,
+                                label
+                            );
                         }
                         for mac in &disappeared {
                             let label = db
@@ -244,15 +244,20 @@ fn main() {
                                 .and_then(|r| r.custom_name.as_deref())
                                 .map(|n| format!(" \"{}\"", n))
                                 .unwrap_or_default();
-                            println!("[{now}] ALERT: Device gone: {}{}", mac, label);
+                            println!("[{now}] {} Device gone: {}{}", "▼".red(), mac, label);
                         }
 
-                        println!(
-                            "[{now}] {} devices, {} new, {} disappeared",
+                        let summary = format!(
+                            "{} devices, {} new, {} disappeared",
                             current_macs.len(),
                             new_devices.len(),
                             disappeared.len()
                         );
+                        if new_devices.is_empty() && disappeared.is_empty() {
+                            println!("[{now}] {}", summary.dimmed());
+                        } else {
+                            println!("[{now}] {}", summary);
+                        }
 
                         last_macs = current_macs;
                     }
@@ -285,11 +290,35 @@ fn main() {
                         dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
                     };
                     println!("MAC:         {}", r.mac);
-                    println!("Name:        {}", r.custom_name.as_deref().unwrap_or("(none)"));
+                    println!(
+                        "Name:        {}",
+                        r.custom_name.as_deref().unwrap_or("(none)")
+                    );
                     println!("Status:      {}", r.status);
-                    println!("Vendor:      {}", if r.vendor.is_empty() { "(unknown)" } else { &r.vendor });
-                    println!("IPs seen:    {}", if r.ips_seen.is_empty() { "(none)".to_string() } else { r.ips_seen.join(", ") });
-                    println!("Hostnames:   {}", if r.hostnames.is_empty() { "(none)".to_string() } else { r.hostnames.join(", ") });
+                    println!(
+                        "Vendor:      {}",
+                        if r.vendor.is_empty() {
+                            "(unknown)"
+                        } else {
+                            &r.vendor
+                        }
+                    );
+                    println!(
+                        "IPs seen:    {}",
+                        if r.ips_seen.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            r.ips_seen.join(", ")
+                        }
+                    );
+                    println!(
+                        "Hostnames:   {}",
+                        if r.hostnames.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            r.hostnames.join(", ")
+                        }
+                    );
                     println!("First seen:  {}", fmt(&r.first_seen));
                     println!("Last seen:   {}", fmt(&r.last_seen));
                 }

@@ -45,8 +45,7 @@ pub fn load_db() -> Result<Db, String> {
 pub fn save_db(db: &Db) -> Result<(), String> {
     let path = db_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create config dir: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {e}"))?;
     }
     let data =
         serde_json::to_string_pretty(db).map_err(|e| format!("Failed to serialize DB: {e}"))?;
@@ -148,8 +147,14 @@ mod tests {
     #[test]
     fn update_device_accumulates_ips() {
         let mut db: Db = HashMap::new();
-        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
-        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.2", "Acme"));
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"),
+        );
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.2", "Acme"),
+        );
         let r = &db["AA:BB:CC:DD:EE:FF"];
         assert_eq!(r.ips_seen, vec!["10.0.0.1", "10.0.0.2"]);
     }
@@ -157,8 +162,14 @@ mod tests {
     #[test]
     fn update_device_no_duplicate_ips() {
         let mut db: Db = HashMap::new();
-        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
-        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"),
+        );
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"),
+        );
         let r = &db["AA:BB:CC:DD:EE:FF"];
         assert_eq!(r.ips_seen.len(), 1);
     }
@@ -173,7 +184,10 @@ mod tests {
     #[test]
     fn set_name_known_device() {
         let mut db: Db = HashMap::new();
-        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"),
+        );
         let ok = set_name(&mut db, "AA:BB:CC:DD:EE:FF", "My Device");
         assert!(ok);
         let r = &db["AA:BB:CC:DD:EE:FF"];
@@ -190,7 +204,10 @@ mod tests {
     #[test]
     fn remove_device_known_mac() {
         let mut db: Db = HashMap::new();
-        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"),
+        );
         let ok = remove_device(&mut db, "AA:BB:CC:DD:EE:FF");
         assert!(ok);
         assert!(db.is_empty());
@@ -205,7 +222,10 @@ mod tests {
     #[test]
     fn set_flag_marks_device() {
         let mut db: Db = HashMap::new();
-        update_device(&mut db, &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"));
+        update_device(
+            &mut db,
+            &make_device("AA:BB:CC:DD:EE:FF", "10.0.0.1", "Acme"),
+        );
         let ok = set_flag(&mut db, "AA:BB:CC:DD:EE:FF");
         assert!(ok);
         assert_eq!(db["AA:BB:CC:DD:EE:FF"].status, "flagged");
